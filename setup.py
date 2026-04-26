@@ -169,7 +169,7 @@ def main():
     print("=" * 60)
     print()
 
-    default_endpoint = cfg.get('agent_endpoint', 'http://localhost:18796/v1/chat/completions')
+    default_endpoint = cfg.get('agent_endpoint', 'http://localhost:18796/v1')
     agent_endpoint = input(f"  Agent Endpoint URL [{default_endpoint}]: ").strip()
     cfg['agent_endpoint'] = agent_endpoint or default_endpoint
 

@@ -102,6 +102,9 @@ def send_pong(cfg):
             timeout=10,
         )
         data = r.json()
+    except requests.exceptions.JSONDecodeError:
+        log.error(f'send_pong: server returned no JSON (HTTP {r.status_code}): {r.text[:200]}')
+        return
     except Exception as e:
         log.error(f'send_pong failed: {e}')
         return
