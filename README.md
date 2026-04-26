@@ -13,7 +13,7 @@ Verbindet deinen lokalen KI-Agenten mit dem Alexa Skill "AI Agent Tasks".
 
 ```bash
 # 1. Repository klonen
-git clone https://github.com/YOUR_REPO/aat-bridge.git
+git clone https://github.com/computeq-admin/aat-bridge.git
 cd aat-bridge
 
 # 2. Installation (erstellt venv, installiert Dependencies)
