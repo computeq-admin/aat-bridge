@@ -1,1 +1,6 @@
 gitupdate.sh
+config.json
+venv/
+aat_bridge.log
+__pycache__/
+*.pyc
