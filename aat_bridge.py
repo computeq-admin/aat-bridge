@@ -234,13 +234,16 @@ def on_connect(client, userdata, flags, rc):
 
 def on_message(client, userdata, msg):
     cfg = userdata
+    raw = msg.payload.decode().strip()
     try:
-        payload = json.loads(msg.payload.decode())
+        payload = json.loads(raw)
+        action = payload.get('action', '')
     except Exception:
+        # Plain-string payload (z.B. "ping" oder "wakeup")
         payload = {}
+        action = raw
 
-    action = payload.get('action', '')
-    log.info(f'MQTT message received: action={action}')
+    log.info(f'MQTT message received: raw={raw!r} action={action}')
 
     if action == 'wakeup':
         process_wakeup(cfg)
