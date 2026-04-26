@@ -1,0 +1,16 @@
+[Unit]
+Description=AAT Bridge — AI Agent Tasks
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_USER
+WorkingDirectory=/opt/aat-bridge
+ExecStart=/opt/aat-bridge/venv/bin/python3 /opt/aat-bridge/aat_bridge.py
+Restart=always
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
