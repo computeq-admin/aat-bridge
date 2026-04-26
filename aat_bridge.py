@@ -128,13 +128,12 @@ def put_answer(cfg, job_id, answer):
 def call_agent(cfg, prompt):
     """Sendet Prompt an den KI-Agenten, gibt Antwort zurück"""
     agent_url   = cfg['agent_endpoint']
-    agent_token = cfg['agent_token']
+    agent_token = cfg.get('agent_token', '')
     agent_model = cfg.get('agent_model', 'chatcompletion')
 
-    headers = {
-        'Authorization': f'Bearer {agent_token}',
-        'Content-Type':  'application/json',
-    }
+    headers = {'Content-Type': 'application/json'}
+    if agent_token:
+        headers['Authorization'] = f'Bearer {agent_token}'
     payload = {
         'model':    agent_model,
         'messages': [{'role': 'user', 'content': prompt}],
@@ -238,8 +237,7 @@ def main():
     cfg = load_config()
 
     required = ['token_a', 'token_b', 'server_url', 'agent_endpoint',
-                'agent_token', 'mqtt_host', 'mqtt_port',
-                'mqtt_user', 'mqtt_password']
+                'mqtt_host', 'mqtt_port', 'mqtt_user', 'mqtt_password']
     missing = [k for k in required if not cfg.get(k)]
     if missing:
         log.error(f'Missing config keys: {missing}')

@@ -76,7 +76,7 @@ def main():
     print(f"  >>> {token_a} <<<")
     print()
     print("  Trage diesen Token jetzt in dein Webportal ein:")
-    print(f"  {DEFAULT_SERVER}/account.php")
+    print(f"  {DEFAULT_SERVER}/index.php")
     print()
     print("  Das Portal gibt dir einen One-Time-Token (OTT) zurück.")
     print()
