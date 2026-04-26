@@ -149,10 +149,16 @@ def put_answer(cfg, job_id, answer):
 
 
 # ─────────────────────────────────────────────
+# Conversation history (in-memory)
+# ─────────────────────────────────────────────
+conversation_history = []
+
+
+# ─────────────────────────────────────────────
 # Agent call (OpenAI-compatible endpoint)
 # ─────────────────────────────────────────────
-def call_agent(cfg, prompt):
-    """Sendet Prompt an den KI-Agenten, gibt Antwort zurück"""
+def call_agent(cfg, messages):
+    """Sendet Messages-Liste an den KI-Agenten, gibt Antwort zurück"""
     agent_url   = cfg['agent_endpoint']
     agent_token = cfg.get('agent_token', '')
     agent_model = cfg.get('agent_model', 'chatcompletion')
@@ -162,12 +168,12 @@ def call_agent(cfg, prompt):
         headers['Authorization'] = f'Bearer {agent_token}'
     payload = {
         'model':    agent_model,
-        'messages': [{'role': 'user', 'content': prompt}],
+        'messages': messages,
         'stream':   False,
     }
 
     try:
-        log.info(f'Calling agent: {agent_url}')
+        log.info(f'Calling agent: {agent_url} ({len(messages)} messages in history)')
         r = requests.post(
             agent_url,
             headers=headers,
@@ -192,27 +198,36 @@ def call_agent(cfg, prompt):
 # ─────────────────────────────────────────────
 def process_wakeup(cfg):
     """Wird aufgerufen wenn MQTT Wakeup-Message eintrifft"""
+    global conversation_history
     log.info('Wakeup received — fetching job...')
 
     job = get_job(cfg)
     if not job:
         return
 
-    prompt = job.get('prompt', '')
-    job_id = job.get('job_id')
+    prompt     = job.get('prompt', '')
+    job_id     = job.get('job_id')
+    reset      = job.get('reset_history', True)
 
     if not prompt or not job_id:
         log.warning('Job has no prompt or id, skipping.')
         return
 
-    log.info(f'Processing job #{job_id}: "{prompt[:60]}..."')
+    if reset:
+        conversation_history = []
+        log.info('Conversation history reset (last job >1h ago or first job).')
 
-    answer = call_agent(cfg, prompt)
+    conversation_history.append({'role': 'user', 'content': prompt})
+    log.info(f'Processing job #{job_id}: "{prompt[:60]}..." (history: {len(conversation_history)} messages)')
+
+    answer = call_agent(cfg, list(conversation_history))
 
     if answer:
+        conversation_history.append({'role': 'assistant', 'content': answer})
         put_answer(cfg, job_id, answer)
     else:
-        # Fehlermeldung zurückschreiben damit User Feedback bekommt
+        # Fehlgeschlagenen User-Turn wieder entfernen
+        conversation_history.pop()
         lang = cfg.get('lang', 'EN')
         err_msg = (
             'Es ist leider ein Fehler aufgetreten. Bitte versuche es erneut.'
