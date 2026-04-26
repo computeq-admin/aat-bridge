@@ -93,6 +93,29 @@ def get_job(cfg):
     return None
 
 
+def send_pong(cfg):
+    """Antwortet auf Server-Ping, rotiert Token-B"""
+    try:
+        r = requests.post(
+            cfg['server_url'] + '/ping.php',
+            json={'token_b': cfg['token_b']},
+            timeout=10,
+        )
+        data = r.json()
+    except Exception as e:
+        log.error(f'send_pong failed: {e}')
+        return
+
+    if 'token_b_new' in data:
+        cfg['token_b'] = data['token_b_new']
+        save_config(cfg)
+
+    if data.get('status') == 'pong':
+        log.info('Pong sent — bridge confirmed online')
+    else:
+        log.warning(f'Unexpected ping response: {data}')
+
+
 def put_answer(cfg, job_id, answer):
     """Schreibt Antwort zurück, rotiert Token-B"""
     try:
@@ -221,6 +244,8 @@ def on_message(client, userdata, msg):
 
     if action == 'wakeup':
         process_wakeup(cfg)
+    elif action == 'ping':
+        send_pong(cfg)
     else:
         log.warning(f'Unknown MQTT action: {action}')
 

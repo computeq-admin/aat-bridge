@@ -17,6 +17,7 @@ Usage:
 import json
 import os
 import secrets
+import subprocess
 import sys
 from pathlib import Path
 
@@ -41,6 +42,36 @@ def save_config(cfg):
     with open(CONFIG_FILE, 'w') as f:
         json.dump(cfg, f, indent=2)
     os.chmod(CONFIG_FILE, 0o600)
+
+
+def install_service(install_dir):
+    """Installiert aat_bridge als systemd User-Service"""
+    service_template = Path(__file__).parent / 'aat_bridge.service'
+    if not service_template.exists():
+        print("  ⚠ aat_bridge.service nicht gefunden, übersprungen.")
+        return
+
+    content = service_template.read_text()
+    content = content.replace('__INSTALL_DIR__', str(install_dir))
+
+    systemd_dir = Path.home() / '.config' / 'systemd' / 'user'
+    systemd_dir.mkdir(parents=True, exist_ok=True)
+
+    dest = systemd_dir / 'aat_bridge.service'
+    dest.write_text(content)
+    print(f"  ✓ Service-Datei geschrieben: {dest}")
+
+    try:
+        subprocess.run(['systemctl', '--user', 'daemon-reload'], check=True)
+        subprocess.run(['systemctl', '--user', 'enable', '--now', 'aat_bridge'], check=True)
+        print("  ✓ Service aktiviert und gestartet")
+    except subprocess.CalledProcessError as e:
+        print(f"  ⚠ systemctl Fehler: {e}")
+        print("  Manuell: systemctl --user enable --now aat_bridge")
+    except FileNotFoundError:
+        print("  ⚠ systemctl nicht gefunden. Service manuell installieren:")
+        print(f"  cp {dest} ~/.config/systemd/user/")
+        print("  systemctl --user enable --now aat_bridge")
 
 
 def main():
@@ -158,21 +189,43 @@ def main():
 
     # ── Speichern ─────────────────────────────
     save_config(cfg)
+    print("  ✓ config.json gespeichert (Berechtigungen: 600).")
+
+    # ── Service installieren ───────────────────
+    print()
+    print("=" * 60)
+    print("  SCHRITT 4: Systemd User-Service")
+    print("=" * 60)
+    print()
+    print("  Der Bridge-Service läuft als dein Benutzer (kein sudo nötig).")
+    print()
+    ans = input("  Service jetzt einrichten und starten? (J/n): ").strip().lower()
+    if ans != 'n':
+        install_service(Path(__file__).parent)
+        print()
+        print("  Tipp: Damit der Service auch ohne Login startet:")
+        print("  loginctl enable-linger $USER")
+    else:
+        install_dir = Path(__file__).parent
+        print()
+        print("  Manuell einrichten:")
+        print(f"  python3 -c \"")
+        print(f"    from pathlib import Path; import setup")
+        print(f"    setup.install_service(Path('{install_dir}'))\"")
+        print("  oder: systemctl --user enable --now aat_bridge")
 
     print()
     print("=" * 60)
     print("  Setup abgeschlossen!")
     print("=" * 60)
     print()
-    print("  config.json wurde gespeichert (Berechtigungen: 600).")
-    print()
-    print("  Bridge starten:")
+    print("  Bridge manuell starten (ohne Service):")
     print("  ./start.sh")
     print()
-    print("  Als Systemd Service:")
-    print("  sudo cp aat_bridge.service /etc/systemd/system/aat_bridge.service")
-    print("  sudo nano /etc/systemd/system/aat_bridge.service  # YOUR_USER anpassen")
-    print("  sudo systemctl enable --now aat_bridge")
+    print("  Service-Befehle:")
+    print("  systemctl --user status aat_bridge")
+    print("  systemctl --user restart aat_bridge")
+    print("  journalctl --user -u aat_bridge -f")
     print()
 
 
