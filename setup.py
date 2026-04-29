@@ -100,10 +100,21 @@ def configure_cli(cfg):
     cfg['cli_system_prompt_param'] = val or default
 
     default = cfg.get('cli_session_id_param', '')
-    print(f"  Session-ID-Parameter [{default or 'leer = kein Session-Tracking'}]")
-    print("  (z.B. --resume — Bridge übergibt eine UUID zur Fortsetzung der Konversation)")
+    print(f"  Session-Fortsetzungs-Parameter [{default or 'leer = kein Session-Tracking'}]")
+    print("  (z.B. --resume — wird mit der Session-ID aus dem letzten Call übergeben)")
     val = input("  > ").strip()
     cfg['cli_session_id_param'] = val if val else default
+
+    default = cfg.get('cli_session_id_output_field', '')
+    print(f"  JSON-Feld für Session-ID im Output [{default or 'leer = kein JSON-Parsing'}]")
+    print("  (z.B. session_id bei Claude CLI mit --output-format json)")
+    val = input("  > ").strip()
+    cfg['cli_session_id_output_field'] = val if val else default
+
+    if cfg.get('cli_session_id_output_field'):
+        default = cfg.get('cli_answer_output_field', 'result')
+        val = input(f"  JSON-Feld für Antworttext im Output [{default}]: ").strip()
+        cfg['cli_answer_output_field'] = val or default
 
     default = cfg.get('cli_timeout', 600)
     val = input(f"  Timeout in Sekunden [{default}]: ").strip()

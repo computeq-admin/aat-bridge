@@ -23,7 +23,6 @@ import signal
 import subprocess
 import sys
 import time
-import uuid
 from pathlib import Path
 
 import paho.mqtt.client as mqtt
@@ -156,28 +155,38 @@ def put_answer(cfg, job_id, answer):
 _current_session_id = None
 
 
-def get_or_reset_session(reset):
-    """Gibt die aktuelle Session-ID zurück; bei reset=True wird eine neue erzeugt."""
+def reset_session():
     global _current_session_id
-    if reset or _current_session_id is None:
-        _current_session_id = str(uuid.uuid4())
-        log.info(f'New session started: {_current_session_id}')
-    else:
-        log.info(f'Continuing session: {_current_session_id}')
-    return _current_session_id
+    _current_session_id = None
+    log.info('Session reset — next call starts a new session.')
+
+
+def store_session_id(session_id):
+    global _current_session_id
+    _current_session_id = session_id
+    log.info(f'Session ID stored: {session_id}')
 
 
 # ─────────────────────────────────────────────
 # Agent call (CLI)
 # ─────────────────────────────────────────────
-def call_agent_cli(cfg, prompt, system_prompt='', session_id=None):
-    """Ruft den KI-Agenten als lokalen CLI-Prozess auf, gibt stdout zurück"""
+def call_agent_cli(cfg, prompt, system_prompt=''):
+    """Ruft den KI-Agenten als lokalen CLI-Prozess auf, gibt Antwort-Text zurück.
+
+    Session-Handling:
+      - Kein _current_session_id → kein --resume, neuer Session-Start
+      - _current_session_id gesetzt → --resume <id> wird übergeben
+      - Nach erfolgreichem Call: Session-ID aus JSON-Output extrahieren (wenn konfiguriert)
+    """
     cmd = [cfg['cli_command']]
 
-    # Session-ID übergeben (z.B. --resume <uuid>) wenn konfiguriert und vorhanden
+    # Session fortsetzen wenn ID vorhanden (vom letzten erfolgreichen Call)
     session_param = cfg.get('cli_session_id_param', '')
-    if session_param and session_id:
-        cmd += [session_param, session_id]
+    if session_param and _current_session_id:
+        cmd += [session_param, _current_session_id]
+        log.info(f'Continuing session: {_current_session_id}')
+    else:
+        log.info('Starting new session (no resume)')
 
     sp_param = cfg.get('cli_system_prompt_param', '')
     if sp_param and system_prompt:
@@ -211,12 +220,36 @@ def call_agent_cli(cfg, prompt, system_prompt='', session_id=None):
         if result.returncode != 0:
             log.error(f'CLI exited {result.returncode}: {result.stderr[:300]}')
             return None
-        answer = result.stdout.strip()
-        if not answer:
+
+        raw = result.stdout.strip()
+        if not raw:
             log.error('CLI returned empty output')
             return None
+
+        # JSON-Output parsen wenn konfiguriert (z.B. claude --output-format json)
+        session_id_field = cfg.get('cli_session_id_output_field', '')
+        if session_id_field:
+            try:
+                data = json.loads(raw)
+                # Session-ID für nächsten Call speichern
+                new_sid = data.get(session_id_field, '')
+                if new_sid:
+                    store_session_id(new_sid)
+                # Antworttext aus "result"-Feld (Claude CLI) oder konfigurierbarem Feld
+                answer_field = cfg.get('cli_answer_output_field', 'result')
+                answer = data.get(answer_field, '').strip()
+                if not answer:
+                    log.error(f'JSON output has no "{answer_field}" field: {raw[:200]}')
+                    return None
+            except json.JSONDecodeError:
+                log.error(f'Expected JSON output but got: {raw[:200]}')
+                return None
+        else:
+            answer = raw
+
         log.info(f'CLI answered ({len(answer)} chars)')
         return answer
+
     except subprocess.TimeoutExpired:
         log.error(f'CLI timed out after {timeout}s')
         return None
@@ -245,10 +278,11 @@ def process_wakeup(cfg):
         log.warning('Job has no prompt or id, skipping.')
         return
 
-    session_id = get_or_reset_session(reset)
+    if reset:
+        reset_session()
     log.info(f'Processing job #{job_id}: "{prompt[:60]}..."')
 
-    answer = call_agent_cli(cfg, prompt, system_prompt, session_id)
+    answer = call_agent_cli(cfg, prompt, system_prompt)
 
     if answer:
         put_answer(cfg, job_id, answer)
