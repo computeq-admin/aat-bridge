@@ -17,6 +17,7 @@ Usage:
 import json
 import os
 import secrets
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -74,7 +75,96 @@ def install_service(install_dir):
         print("  systemctl --user enable --now aat_bridge")
 
 
+def configure_cli(cfg):
+    """Konfiguriert den CLI-Agenten interaktiv"""
+    print()
+    print("=" * 60)
+    print("  KI-Agent CLI konfigurieren")
+    print("=" * 60)
+    print()
+
+    default = cfg.get('cli_command', '')
+    val = input(f"  CLI Befehl (voller Pfad) [{default or 'z.B. /usr/local/bin/claude'}]: ").strip()
+    cfg['cli_command'] = val or default
+
+    default = cfg.get('cli_working_dir', '')
+    val = input(f"  Arbeitsverzeichnis [{default or 'leer = Bridge-Verzeichnis'}]: ").strip()
+    cfg['cli_working_dir'] = val or default or ''
+
+    default = cfg.get('cli_prompt_param', '-p')
+    val = input(f"  Prompt-Parameter [{default}]: ").strip()
+    cfg['cli_prompt_param'] = val or default
+
+    default = cfg.get('cli_system_prompt_param', '--system-prompt')
+    val = input(f"  System-Prompt-Parameter [{default}]: ").strip()
+    cfg['cli_system_prompt_param'] = val or default
+
+    default = cfg.get('cli_session_id_param', '')
+    print(f"  Session-ID-Parameter [{default or 'leer = kein Session-Tracking'}]")
+    print("  (z.B. --resume — Bridge übergibt eine UUID zur Fortsetzung der Konversation)")
+    val = input("  > ").strip()
+    cfg['cli_session_id_param'] = val if val else default
+
+    default = cfg.get('cli_timeout', 600)
+    val = input(f"  Timeout in Sekunden [{default}]: ").strip()
+    cfg['cli_timeout'] = int(val) if val.isdigit() else default
+
+    existing_extra = cfg.get('cli_extra_params', [])
+    default_str = ' '.join(existing_extra) if existing_extra else 'keine'
+    print(f"  Weitere Parameter [{default_str}]")
+    print("  (Leerzeichen-getrennt, z.B. --no-color --output-format text)")
+    val = input("  > ").strip()
+    if val:
+        cfg['cli_extra_params'] = shlex.split(val)
+    elif not existing_extra:
+        cfg['cli_extra_params'] = []
+
+    print()
+    print("  Umgebungsvariablen (Format: KEY=VALUE, leere Zeile zum Abschluss)")
+    existing_env = cfg.get('cli_env', {})
+    if existing_env:
+        print(f"  Bestehend: {json.dumps(existing_env, ensure_ascii=False)}")
+        keep = input("  Bestehende behalten? (J/n): ").strip().lower()
+        if keep == 'n':
+            existing_env = {}
+    env_vars = dict(existing_env)
+    while True:
+        val = input("  KEY=VALUE (oder ENTER zum Abschluss): ").strip()
+        if not val:
+            break
+        if '=' in val:
+            k, v = val.split('=', 1)
+            env_vars[k.strip()] = v.strip()
+        else:
+            print("  ⚠ Format: KEY=VALUE — übersprungen")
+    cfg['cli_env'] = env_vars
+
+    return cfg
+
+
 def main():
+    # ── Nur Agent-Konfiguration (ohne Neuverbindung) ──────────────────────────
+    if '--config' in sys.argv:
+        cfg = load_or_create_config()
+        if not cfg.get('token_b'):
+            print("Keine bestehende Verbindung gefunden. Bitte zuerst Setup ausführen:")
+            print("  ./start.sh --setup")
+            sys.exit(1)
+        print()
+        print("=" * 60)
+        print("  AAT Bridge — Agent-Konfiguration")
+        print("=" * 60)
+        cfg = configure_cli(cfg)
+        save_config(cfg)
+        print()
+        print("  ✓ config.json aktualisiert.")
+        print()
+        print("  Bridge neu starten um Änderungen zu übernehmen:")
+        print("  systemctl --user restart aat_bridge")
+        print("  oder: ./start.sh")
+        print()
+        sys.exit(0)
+
     print()
     print("=" * 60)
     print("  AAT Bridge Setup — AI Agent Tasks")
@@ -167,24 +257,7 @@ def main():
     print("=" * 60)
     print("  SCHRITT 3: KI-Agent konfigurieren")
     print("=" * 60)
-    print()
-
-    default_endpoint = cfg.get('agent_endpoint', 'http://localhost:18796/v1/chat/completions')
-    agent_endpoint = input(f"  Agent Endpoint URL [{default_endpoint}]: ").strip()
-    cfg['agent_endpoint'] = agent_endpoint or default_endpoint
-
-    default_token = cfg.get('agent_token', '')
-    agent_token = input(f"  Agent API Token [{default_token or 'keiner'}]: ").strip()
-    cfg['agent_token'] = agent_token or default_token
-
-    default_model = cfg.get('agent_model', 'chatcompletion')
-    agent_model = input(f"  Agent Model [{default_model}]: ").strip()
-    cfg['agent_model'] = agent_model or default_model
-
-    default_timeout = cfg.get('agent_timeout', 120)
-    timeout_str = input(f"  Agent Timeout Sekunden [{default_timeout}]: ").strip()
-    cfg['agent_timeout'] = int(timeout_str) if timeout_str.isdigit() else default_timeout
-
+    cfg = configure_cli(cfg)
     cfg['lang'] = 'DE'
 
     # ── Speichern ─────────────────────────────

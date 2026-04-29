@@ -20,8 +20,10 @@ import json
 import logging
 import os
 import signal
+import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 
 import paho.mqtt.client as mqtt
@@ -149,47 +151,77 @@ def put_answer(cfg, job_id, answer):
 
 
 # ─────────────────────────────────────────────
-# Conversation history (in-memory)
+# Session management
 # ─────────────────────────────────────────────
-conversation_history = []
+_current_session_id = None
+
+
+def get_or_reset_session(reset):
+    """Gibt die aktuelle Session-ID zurück; bei reset=True wird eine neue erzeugt."""
+    global _current_session_id
+    if reset or _current_session_id is None:
+        _current_session_id = str(uuid.uuid4())
+        log.info(f'New session started: {_current_session_id}')
+    else:
+        log.info(f'Continuing session: {_current_session_id}')
+    return _current_session_id
 
 
 # ─────────────────────────────────────────────
-# Agent call (OpenAI-compatible endpoint)
+# Agent call (CLI)
 # ─────────────────────────────────────────────
-def call_agent(cfg, messages):
-    """Sendet Messages-Liste an den KI-Agenten, gibt Antwort zurück"""
-    agent_url   = cfg['agent_endpoint']
-    agent_token = cfg.get('agent_token', '')
-    agent_model = cfg.get('agent_model', 'chatcompletion')
+def call_agent_cli(cfg, prompt, system_prompt='', session_id=None):
+    """Ruft den KI-Agenten als lokalen CLI-Prozess auf, gibt stdout zurück"""
+    cmd = [cfg['cli_command']]
 
-    headers = {'Content-Type': 'application/json'}
-    if agent_token:
-        headers['Authorization'] = f'Bearer {agent_token}'
-    payload = {
-        'model':    agent_model,
-        'messages': messages,
-        'stream':   False,
-    }
+    # Session-ID übergeben (z.B. --resume <uuid>) wenn konfiguriert und vorhanden
+    session_param = cfg.get('cli_session_id_param', '')
+    if session_param and session_id:
+        cmd += [session_param, session_id]
 
+    sp_param = cfg.get('cli_system_prompt_param', '')
+    if sp_param and system_prompt:
+        cmd += [sp_param, system_prompt]
+
+    for arg in cfg.get('cli_extra_params', []):
+        cmd.append(str(arg))
+
+    prompt_param = cfg.get('cli_prompt_param', '')
+    if prompt_param:
+        cmd += [prompt_param, prompt]
+    else:
+        cmd.append(prompt)
+
+    env = os.environ.copy()
+    env.update(cfg.get('cli_env', {}))
+
+    cwd     = cfg.get('cli_working_dir') or None
+    timeout = cfg.get('cli_timeout', 600)
+
+    log.info(f'Calling CLI agent: {cmd[0]} (timeout={timeout}s, cwd={cwd})')
     try:
-        log.info(f'Calling agent: {agent_url} ({len(messages)} messages in history)')
-        r = requests.post(
-            agent_url,
-            headers=headers,
-            json=payload,
-            timeout=cfg.get('agent_timeout', 120),
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=cwd,
+            timeout=timeout,
         )
-        r.raise_for_status()
-        data    = r.json()
-        answer  = data['choices'][0]['message']['content']
-        log.info(f'Agent answered ({len(answer)} chars)')
+        if result.returncode != 0:
+            log.error(f'CLI exited {result.returncode}: {result.stderr[:300]}')
+            return None
+        answer = result.stdout.strip()
+        if not answer:
+            log.error('CLI returned empty output')
+            return None
+        log.info(f'CLI answered ({len(answer)} chars)')
         return answer
-    except requests.exceptions.Timeout:
-        log.error('Agent call timed out')
+    except subprocess.TimeoutExpired:
+        log.error(f'CLI timed out after {timeout}s')
         return None
     except Exception as e:
-        log.error(f'Agent call failed: {e}')
+        log.error(f'CLI call failed: {e}')
         return None
 
 
@@ -198,37 +230,30 @@ def call_agent(cfg, messages):
 # ─────────────────────────────────────────────
 def process_wakeup(cfg):
     """Wird aufgerufen wenn MQTT Wakeup-Message eintrifft"""
-    global conversation_history
     log.info('Wakeup received — fetching job...')
 
     job = get_job(cfg)
     if not job:
         return
 
-    prompt     = job.get('prompt', '')
-    job_id     = job.get('job_id')
-    reset      = job.get('reset_history', True)
+    prompt        = job.get('prompt', '')
+    job_id        = job.get('job_id')
+    system_prompt = job.get('system_prompt', '')
+    reset         = job.get('reset_history', True)
 
     if not prompt or not job_id:
         log.warning('Job has no prompt or id, skipping.')
         return
 
-    if reset:
-        conversation_history = []
-        log.info('Conversation history reset (last job >1h ago or first job).')
+    session_id = get_or_reset_session(reset)
+    log.info(f'Processing job #{job_id}: "{prompt[:60]}..."')
 
-    conversation_history.append({'role': 'user', 'content': prompt})
-    log.info(f'Processing job #{job_id}: "{prompt[:60]}..." (history: {len(conversation_history)} messages)')
-
-    answer = call_agent(cfg, list(conversation_history))
+    answer = call_agent_cli(cfg, prompt, system_prompt, session_id)
 
     if answer:
-        conversation_history.append({'role': 'assistant', 'content': answer})
         put_answer(cfg, job_id, answer)
     else:
-        # Fehlgeschlagenen User-Turn wieder entfernen
-        conversation_history.pop()
-        lang = cfg.get('lang', 'EN')
+        lang = cfg.get('lang', 'DE')
         err_msg = (
             'Es ist leider ein Fehler aufgetreten. Bitte versuche es erneut.'
             if lang == 'DE' else
@@ -282,7 +307,7 @@ def on_disconnect(client, userdata, rc):
 def main():
     cfg = load_config()
 
-    required = ['token_a', 'token_b', 'server_url', 'agent_endpoint',
+    required = ['token_a', 'token_b', 'server_url', 'cli_command',
                 'mqtt_host', 'mqtt_port', 'mqtt_user', 'mqtt_password']
     missing = [k for k in required if not cfg.get(k)]
     if missing:
